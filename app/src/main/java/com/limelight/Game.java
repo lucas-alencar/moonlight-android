@@ -2504,10 +2504,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             "Reconectando em qualidade menor", android.widget.Toast.LENGTH_LONG).show();
                     /*
                      * Para a conexao JA e espera o Sunshine desmontar a sessao
-                     * antes de voltar. O recreate imediato reconectava em
-                     * milissegundos, o resume colidia com a desmontagem do
-                     * lado de la e morria em 300ms (medido em campo, 20/08);
-                     * a pessoa via tela preta e tocava de novo no escuro.
+                     * antes de voltar. No campo (20/08), a reconexao que veio
+                     * 2,3s depois da queda ainda morreu em 460ms, entao a
+                     * folga aqui e 4s ate um post-mortem de campo dizer
+                     * melhor: o boto e RECONECTAR, e fechar no meio e o pior
+                     * desfecho que ele pode ter.
                      */
                     stopConnection();
                     new Handler().postDelayed(new Runnable() {
@@ -2516,7 +2517,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             android.util.Log.i("MugenVigia", "reconectando agora, um degrau abaixo");
                             recreate();
                         }
-                    }, 2500);
+                    }, 4000);
                 }
             });
             android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
