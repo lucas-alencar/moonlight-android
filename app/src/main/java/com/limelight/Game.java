@@ -2473,9 +2473,23 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
         if (faixaDeSofrimento == null) {
             faixaDeSofrimento = new TextView(this);
-            faixaDeSofrimento.setTextColor(0xFFFFFFFF);
-            faixaDeSofrimento.setBackgroundColor(0xCC202020);
-            int p = (int) (12 * getResources().getDisplayMetrics().density);
+            /*
+             * As cores sao as do hub (paleta Mocha do tema padrao de la):
+             * fundo base #1e1e2e quase opaco, borda surface1 #45475a e o
+             * texto no pessego #fab387, que e o tom do streaming no painel.
+             * A faixa e a unica peca nossa DENTRO do video, entao e ela que
+             * carrega a identidade: cinza generico parecia dialogo de
+             * sistema, e foi pedido com todas as letras que parecesse hub.
+             */
+            float d = getResources().getDisplayMetrics().density;
+            android.graphics.drawable.GradientDrawable fundo =
+                    new android.graphics.drawable.GradientDrawable();
+            fundo.setColor(0xE61E1E2E);
+            fundo.setCornerRadius(12 * d);
+            fundo.setStroke((int) (d + 0.5f), 0xFF45475A);
+            faixaDeSofrimento.setBackground(fundo);
+            faixaDeSofrimento.setTextColor(0xFFFAB387);
+            int p = (int) (12 * d);
             faixaDeSofrimento.setPadding(p, p / 2, p, p / 2);
             faixaDeSofrimento.setOnClickListener(new View.OnClickListener() {
                 @Override
