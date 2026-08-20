@@ -2448,24 +2448,31 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // nao deixar aviso pendurado.
         if ((float) dPerdidos / dQuadros > 0.04f) {
             janelasLimpas = 0;
-            if (++janelasSofrendo >= 3) {
+            janelasSofrendo++;
+            // Este log conta a historia que o diagnostico entrega: sem ele,
+            // "a faixa apareceu" e tudo que se sabe de longe.
+            android.util.Log.i("MugenVigia", "janela sofrendo: " + dPerdidos + "/" + dQuadros
+                    + " quadros perdidos (" + janelasSofrendo + " seguidas)");
+            if (janelasSofrendo >= 3) {
                 mostrarFaixaDeSofrimento();
             }
         } else {
             janelasSofrendo = 0;
-            if (++janelasLimpas >= 2 && faixaDeSofrimento != null) {
+            if (++janelasLimpas >= 2 && faixaDeSofrimento != null
+                    && faixaDeSofrimento.getVisibility() == View.VISIBLE) {
+                android.util.Log.i("MugenVigia", "duas janelas limpas: faixa recolhida");
                 faixaDeSofrimento.setVisibility(View.GONE);
             }
         }
     }
 
     private void mostrarFaixaDeSofrimento() {
-        if (degrauAbaixo(false) == null) {
+        int[] alvo = degrauAbaixo(false);
+        if (alvo == null) {
             return; // ja esta no chao da escada: nao ha o que oferecer
         }
         if (faixaDeSofrimento == null) {
             faixaDeSofrimento = new TextView(this);
-            faixaDeSofrimento.setText("Conexao instavel: toque aqui para reduzir a qualidade");
             faixaDeSofrimento.setTextColor(0xFFFFFFFF);
             faixaDeSofrimento.setBackgroundColor(0xCC202020);
             int p = (int) (12 * getResources().getDisplayMetrics().density);
@@ -2473,13 +2480,43 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             faixaDeSofrimento.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    degrauAbaixo(true);
+                    int[] novo = degrauAbaixo(true);
+                    if (novo == null) {
+                        return;
+                    }
+                    /*
+                     * O degrau tocado vira TETO APRENDIDO: sem isto, a
+                     * proxima abertura pelo hub media a rede de novo, decidia
+                     * "casa" de novo e apagava o que a pessoa acabou de
+                     * escolher. Aconteceu no teste de campo de 20/08: faixa
+                     * tocada, e a sessao seguinte voltou em 60fps. O
+                     * aplicarPerfil do MugenTerminal respeita o teto por 30
+                     * minutos.
+                     */
+                    getSharedPreferences(getPackageName() + "_preferences", MODE_PRIVATE).edit()
+                            .putInt("mugen_teto_bitrate", novo[0])
+                            .putLong("mugen_teto_quando", System.currentTimeMillis())
+                            .apply();
+                    android.util.Log.i("MugenVigia", "faixa tocada: descendo para "
+                            + novo[2] + "p" + novo[1] + " @ " + novo[0] + " kbps (teto gravado)");
+                    faixaDeSofrimento.setVisibility(View.GONE);
                     android.widget.Toast.makeText(Game.this,
-                            "Reconectando em qualidade menor", android.widget.Toast.LENGTH_SHORT).show();
-                    // recreate refaz o onCreate, que rele as preferencias e
-                    // renegocia o video: e a unica "adaptacao dinamica" que o
-                    // protocolo permite, um solavanco de poucos segundos.
-                    recreate();
+                            "Reconectando em qualidade menor", android.widget.Toast.LENGTH_LONG).show();
+                    /*
+                     * Para a conexao JA e espera o Sunshine desmontar a sessao
+                     * antes de voltar. O recreate imediato reconectava em
+                     * milissegundos, o resume colidia com a desmontagem do
+                     * lado de la e morria em 300ms (medido em campo, 20/08);
+                     * a pessoa via tela preta e tocava de novo no escuro.
+                     */
+                    stopConnection();
+                    new Handler().postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            android.util.Log.i("MugenVigia", "reconectando agora, um degrau abaixo");
+                            recreate();
+                        }
+                    }, 2500);
                 }
             });
             android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
@@ -2488,6 +2525,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
             lp.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
             addContentView(faixaDeSofrimento, lp);
+        }
+        // O texto diz PRA ONDE vai, e se refaz a cada exibicao porque o alvo
+        // muda conforme se desce a escada.
+        faixaDeSofrimento.setText("Conexao instavel: toque para reduzir para "
+                + alvo[2] + "p" + alvo[1]);
+        if (faixaDeSofrimento.getVisibility() != View.VISIBLE) {
+            android.util.Log.i("MugenVigia", "faixa exibida (alvo " + alvo[2] + "p" + alvo[1] + ")");
         }
         faixaDeSofrimento.setVisibility(View.VISIBLE);
     }
