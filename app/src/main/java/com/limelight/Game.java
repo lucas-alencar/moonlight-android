@@ -150,6 +150,17 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private MediaCodecDecoderRenderer decoderRenderer;
     private boolean reportedCrash;
 
+    // Vigia da conexao (MugenTerminal): mede a perda de quadros em janelas de
+    // 2s e, quando ela persiste, OFERECE reduzir a qualidade. Oferece, nao faz:
+    // derrubar e reerguer o video e um solavanco de segundos, e solavanco sem
+    // pedir e o aplicativo tomando a direcao no meio da curva. Os campos vivem
+    // aqui e nao num objeto proprio porque o ciclo deles e exatamente o da
+    // Activity.
+    private Handler vigiaDaConexao;
+    private Runnable voltaDoVigia;
+    private int quadrosAntes, perdidosAntes, janelasSofrendo, janelasLimpas;
+    private TextView faixaDeSofrimento;
+
     private WifiManager.WifiLock highPerfWifiLock;
     private WifiManager.WifiLock lowLatencyWifiLock;
 
@@ -1029,6 +1040,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     protected void onDestroy() {
         super.onDestroy();
 
+        pararVigiaDaConexao();
         if (controllerHandler != null) {
             controllerHandler.destroy();
         }
@@ -2282,6 +2294,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // Let the display go to sleep now
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
+                pararVigiaDaConexao();
+
                 // Stop processing controller input
                 controllerHandler.stop();
 
@@ -2382,6 +2396,132 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         });
     }
 
+    // ===== Vigia da conexao (MugenTerminal) =====
+
+    private void iniciarVigiaDaConexao() {
+        // Modo manual: a escolha da pessoa fica de pe, sem oferta por cima.
+        // A chave e a mesma que o Streaming.java do MugenTerminal escreve.
+        if ("manual".equals(getSharedPreferences(getPackageName() + "_preferences", MODE_PRIVATE)
+                .getString("mugen_modo_qualidade", "auto"))) {
+            return;
+        }
+        pararVigiaDaConexao();
+        quadrosAntes = perdidosAntes = janelasSofrendo = janelasLimpas = 0;
+        vigiaDaConexao = new Handler();
+        voltaDoVigia = new Runnable() {
+            @Override
+            public void run() {
+                medirSofrimento();
+                vigiaDaConexao.postDelayed(this, 2000);
+            }
+        };
+        // A primeira volta espera o video assentar: os primeiros segundos de
+        // qualquer sessao tem perda de largada que nao diz nada sobre a rede.
+        vigiaDaConexao.postDelayed(voltaDoVigia, 5000);
+    }
+
+    private void pararVigiaDaConexao() {
+        if (vigiaDaConexao != null && voltaDoVigia != null) {
+            vigiaDaConexao.removeCallbacks(voltaDoVigia);
+        }
+        if (faixaDeSofrimento != null) {
+            faixaDeSofrimento.setVisibility(View.GONE);
+        }
+    }
+
+    private void medirSofrimento() {
+        if (!connected || decoderRenderer == null) {
+            return;
+        }
+        int quadros = decoderRenderer.getQuadrosEsperados();
+        int perdidos = decoderRenderer.getQuadrosPerdidos();
+        int dQuadros = quadros - quadrosAntes;
+        int dPerdidos = perdidos - perdidosAntes;
+        quadrosAntes = quadros;
+        perdidosAntes = perdidos;
+        if (dQuadros < 20) {
+            return; // janela quase sem trafego nao diz nada sobre a rede
+        }
+        // O mesmo calculo do overlay de desempenho: perdidos sobre esperados.
+        // 4% em tres janelas seguidas (uns 6s) e video visivelmente sofrendo;
+        // duas janelas limpas escondem a faixa de novo, pra rajada passageira
+        // nao deixar aviso pendurado.
+        if ((float) dPerdidos / dQuadros > 0.04f) {
+            janelasLimpas = 0;
+            if (++janelasSofrendo >= 3) {
+                mostrarFaixaDeSofrimento();
+            }
+        } else {
+            janelasSofrendo = 0;
+            if (++janelasLimpas >= 2 && faixaDeSofrimento != null) {
+                faixaDeSofrimento.setVisibility(View.GONE);
+            }
+        }
+    }
+
+    private void mostrarFaixaDeSofrimento() {
+        if (degrauAbaixo(false) == null) {
+            return; // ja esta no chao da escada: nao ha o que oferecer
+        }
+        if (faixaDeSofrimento == null) {
+            faixaDeSofrimento = new TextView(this);
+            faixaDeSofrimento.setText("Conexao instavel: toque aqui para reduzir a qualidade");
+            faixaDeSofrimento.setTextColor(0xFFFFFFFF);
+            faixaDeSofrimento.setBackgroundColor(0xCC202020);
+            int p = (int) (12 * getResources().getDisplayMetrics().density);
+            faixaDeSofrimento.setPadding(p, p / 2, p, p / 2);
+            faixaDeSofrimento.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    degrauAbaixo(true);
+                    android.widget.Toast.makeText(Game.this,
+                            "Reconectando em qualidade menor", android.widget.Toast.LENGTH_SHORT).show();
+                    // recreate refaz o onCreate, que rele as preferencias e
+                    // renegocia o video: e a unica "adaptacao dinamica" que o
+                    // protocolo permite, um solavanco de poucos segundos.
+                    recreate();
+                }
+            });
+            android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
+            lp.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
+            addContentView(faixaDeSofrimento, lp);
+        }
+        faixaDeSofrimento.setVisibility(View.VISIBLE);
+    }
+
+    /*
+     * A escada e a MESMA do aplicarPerfil (Streaming.java do MugenTerminal):
+     * 1080p60/20M -> 1080p30/8M -> 720p30/5M -> 720p30/3M. Mudar la sem mudar
+     * aqui desalinha a oferta; os dois lados apontam um pro outro em
+     * comentario. Devolve null quando ja se esta no ultimo degrau.
+     */
+    private int[] degrauAbaixo(boolean aplicar) {
+        android.content.SharedPreferences p =
+                getSharedPreferences(getPackageName() + "_preferences", MODE_PRIVATE);
+        int bitrate = p.getInt("seekbar_bitrate_kbps", 20000);
+        final int[] novo;
+        if (bitrate > 8000) {
+            novo = new int[]{8000, 30, 1080};
+        } else if (bitrate > 5000) {
+            novo = new int[]{5000, 30, 720};
+        } else if (bitrate > 3000) {
+            novo = new int[]{3000, 30, 720};
+        } else {
+            return null;
+        }
+        if (aplicar) {
+            p.edit()
+                    .putString("list_resolution", novo[2] == 1080 ? "1920x1080" : "1280x720")
+                    .putString("list_fps", String.valueOf(novo[1]))
+                    .putInt("seekbar_bitrate_kbps", novo[0])
+                    .apply();
+        }
+        return novo;
+    }
+
     @Override
     public void connectionStarted() {
         runOnUiThread(new Runnable() {
@@ -2394,6 +2534,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 connected = true;
                 connecting = false;
+                iniciarVigiaDaConexao();
                 updatePipAutoEnter();
 
                 // Hide the mouse cursor now after a short delay.

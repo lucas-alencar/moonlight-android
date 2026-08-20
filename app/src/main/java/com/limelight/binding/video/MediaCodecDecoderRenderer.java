@@ -1817,6 +1817,19 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return (int)(globalVideoStats.decoderTimeMs / globalVideoStats.totalFramesReceived);
     }
 
+    // Contadores acumulados desde o inicio da sessao, para o vigia de conexao
+    // do MugenTerminal (Game.medirSofrimento) tirar deltas por janela. Somam a
+    // janela ativa porque a global so recebe o fechamento de cada segundo, e o
+    // vigia quer o dado mais fresco que houver. Leitura sem trava de proposito:
+    // int desalinhado em uma volta nao muda decisao tomada em tres.
+    public int getQuadrosEsperados() {
+        return globalVideoStats.totalFrames + activeWindowVideoStats.totalFrames;
+    }
+
+    public int getQuadrosPerdidos() {
+        return globalVideoStats.framesLost + activeWindowVideoStats.framesLost;
+    }
+
     static class DecoderHungException extends RuntimeException {
         private int hangTimeMs;
 
