@@ -2502,36 +2502,31 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                      * O degrau tocado vira TETO APRENDIDO: sem isto, a
                      * proxima abertura pelo hub media a rede de novo, decidia
                      * "casa" de novo e apagava o que a pessoa acabou de
-                     * escolher. Aconteceu no teste de campo de 20/08: faixa
-                     * tocada, e a sessao seguinte voltou em 60fps. O
-                     * aplicarPerfil do MugenTerminal respeita o teto por 30
-                     * minutos.
+                     * escolher. E junto vai o PEDIDO DE RECONEXAO, porque a
+                     * reconexao mudou de dono: recreate() por dentro desta
+                     * Activity brigou com o Android DUAS vezes em campo em
+                     * 20/08 (o relancamento comecava e a MainActivity tomava
+                     * a frente no meio do handshake, alem de sujar o processo:
+                     * o decoder HEVC renasceu na lista negra). Agora o video
+                     * morre limpo (finish) e quem reabre e a PAGINA do hub,
+                     * pelo caminho normal de abrir, que ja mede, ja respeita o
+                     * teto e ja mostra o que esta fazendo.
                      */
+                    String alvoDoApp = getIntent().getStringExtra(EXTRA_APP_NAME);
                     getSharedPreferences(getPackageName() + "_preferences", MODE_PRIVATE).edit()
                             .putInt("mugen_teto_bitrate", novo[0])
                             .putLong("mugen_teto_quando", System.currentTimeMillis())
+                            .putString("mugen_reconectar",
+                                    alvoDoApp == null || alvoDoApp.isEmpty() ? "Desktop" : alvoDoApp)
                             .apply();
                     android.util.Log.i("MugenVigia", "faixa tocada: descendo para "
-                            + novo[2] + "p" + novo[1] + " @ " + novo[0] + " kbps (teto gravado)");
+                            + novo[2] + "p" + novo[1] + " @ " + novo[0]
+                            + " kbps (teto gravado); video encerrado, a pagina reabre");
                     faixaDeSofrimento.setVisibility(View.GONE);
                     android.widget.Toast.makeText(Game.this,
                             "Reconectando em qualidade menor", android.widget.Toast.LENGTH_LONG).show();
-                    /*
-                     * Para a conexao JA e espera o Sunshine desmontar a sessao
-                     * antes de voltar. No campo (20/08), a reconexao que veio
-                     * 2,3s depois da queda ainda morreu em 460ms, entao a
-                     * folga aqui e 4s ate um post-mortem de campo dizer
-                     * melhor: o boto e RECONECTAR, e fechar no meio e o pior
-                     * desfecho que ele pode ter.
-                     */
                     stopConnection();
-                    new Handler().postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            android.util.Log.i("MugenVigia", "reconectando agora, um degrau abaixo");
-                            recreate();
-                        }
-                    }, 4000);
+                    finish();
                 }
             });
             android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
