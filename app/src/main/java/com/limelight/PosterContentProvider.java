@@ -17,7 +17,19 @@ import java.util.List;
 public class PosterContentProvider extends ContentProvider {
 
 
-    public static final String AUTHORITY = "poster." + BuildConfig.APPLICATION_ID;
+    /*
+     * O authority sai do pacote EM TEMPO DE EXECUCAO, e nao de
+     * BuildConfig.APPLICATION_ID.
+     *
+     * Motivo: este modulo virou biblioteca (o MugenTerminal embute o Moonlight
+     * em vez de abrir outro aplicativo), e APPLICATION_ID so existe no
+     * BuildConfig de um APLICATIVO. O manifest ja declarava o provider como
+     * "poster.${applicationId}", que a mesclagem resolve com o pacote de quem
+     * consome; aqui do lado do Java o valor tem que chegar pelo contexto, senao
+     * o authority declarado e o usado deixam de casar e o boxart para de
+     * carregar sem dizer por que.
+     */
+    private static volatile String sAuthority;
     public static final String PNG_MIME_TYPE = "image/png";
     public static final int APP_ID_PATH_INDEX = 2;
     public static final int COMPUTER_UUID_PATH_INDEX = 1;
@@ -29,7 +41,6 @@ public class PosterContentProvider extends ContentProvider {
 
     static {
         sUriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
-        sUriMatcher.addURI(AUTHORITY, BOXART_PATH, BOXART_URI_ID);
     }
 
     @Override
@@ -78,6 +89,10 @@ public class PosterContentProvider extends ContentProvider {
     @Override
     public boolean onCreate() {
         mDiskAssetLoader = new DiskAssetLoader(getContext());
+        // O provider nasce junto com o processo, antes de qualquer tela: e o
+        // primeiro momento em que da pra saber o pacote de quem esta usando.
+        sAuthority = "poster." + getContext().getPackageName();
+        sUriMatcher.addURI(sAuthority, BOXART_PATH, BOXART_URI_ID);
         return true;
     }
 
@@ -97,7 +112,7 @@ public class PosterContentProvider extends ContentProvider {
     public static Uri createBoxArtUri(String uuid, String appId) {
         return new Uri.Builder()
                 .scheme(ContentResolver.SCHEME_CONTENT)
-                .authority(AUTHORITY)
+                .authority(sAuthority)
                 .appendPath(BOXART_PATH)
                 .appendPath(uuid)
                 .appendPath(appId)
