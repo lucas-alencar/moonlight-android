@@ -94,6 +94,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener {
     private int lastButtonState = 0;
 
+    /*
+     * MUGEN: o mouse como caneta ("Compatibilidade de mouse para LoL").
+     *
+     * O Vanguard, anti-cheat do League of Legends, bloqueia no PC todo mouse
+     * sintetico (SendInput) enquanto o jogo roda, e e por esse caminho que o
+     * Sunshine entrega o mouse do Moonlight. Teclado, toque e CANETA passam,
+     * porque entram no Windows por outra API. Medido no proprio PC em 28/08/2026.
+     *
+     * Com o ajuste ligado, o mouse fisico deixa de virar pacote de mouse e vira
+     * caneta: mover = caneta pairando, botao esquerdo = ponta encostada, botao
+     * direito = ponta encostada com o botao lateral (que o Windows traduz em
+     * clique direito). Caneta nao tem "delta", entao a posicao e acumulada
+     * aqui: comeca no centro da imagem e anda com o mouse.
+     *
+     * Se o PC nao aceitar caneta (LI_ERR_UNSUPPORTED), o mouse volta ao normal
+     * na mesma hora: o ajuste vira letra morta em vez de mouse mudo.
+     */
+    private float canetaX = -1, canetaY = -1;
+    private boolean canetaEncostada = false;
+    private byte canetaBotoes = 0;
+    private boolean canetaAceitaPeloPc = true;
+
     // Only 2 touches are supported
     private final TouchContext[] touchContextMap = new TouchContext[2];
     private long threeFingerDownTime = 0;
@@ -1655,6 +1677,92 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         return new float[] { cartesianToR(contactAreaMajorCartesian), cartesianToR(contactAreaMinorCartesian) };
     }
 
+    /**
+     * MUGEN: traduz um evento de mouse em evento de caneta. Devolve false quando
+     * nao deu pra traduzir (imagem ainda sem tamanho, ou PC que nao aceita
+     * caneta), e ai quem chama segue pelo caminho de mouse de sempre.
+     */
+    private boolean mouseComoCaneta(View view, MotionEvent event, int buttonState) {
+        int largura = streamView.getWidth();
+        int altura = streamView.getHeight();
+        if (largura <= 0 || altura <= 0) {
+            return false;
+        }
+
+        // Onde a caneta esta: comeca no centro e acumula os deltas do mouse.
+        if (canetaX < 0 || canetaY < 0) {
+            canetaX = largura / 2f;
+            canetaY = altura / 2f;
+        }
+        boolean mexeu = false;
+        if (inputCaptureProvider.eventHasRelativeMouseAxes(event)) {
+            float dx = inputCaptureProvider.getRelativeAxisX(event);
+            float dy = inputCaptureProvider.getRelativeAxisY(event);
+            if (dx != 0 || dy != 0) {
+                canetaX = Math.max(0, Math.min(largura - 1, canetaX + dx));
+                canetaY = Math.max(0, Math.min(altura - 1, canetaY + dy));
+                mexeu = true;
+            }
+        }
+        else if (view != null && event.getPointerCount() >= 1) {
+            // Mouse sem captura (Android antigo, DeX): a posicao ja vem absoluta.
+            float[] n = getStreamViewRelativeNormalizedXY(view, event, 0);
+            float nx = n[0] * largura;
+            float ny = n[1] * altura;
+            if (nx != canetaX || ny != canetaY) {
+                canetaX = nx;
+                canetaY = ny;
+                mexeu = true;
+            }
+        }
+
+        boolean esquerdo = (buttonState & MotionEvent.BUTTON_PRIMARY) != 0;
+        boolean direito = (buttonState & MotionEvent.BUTTON_SECONDARY) != 0;
+        boolean encostar = esquerdo || direito;
+        byte botoes = direito ? MoonBridge.LI_PEN_BUTTON_PRIMARY : 0;
+
+        byte tipo;
+        if (!canetaEncostada && encostar) {
+            tipo = MoonBridge.LI_TOUCH_EVENT_DOWN;
+        }
+        else if (canetaEncostada && !encostar) {
+            tipo = MoonBridge.LI_TOUCH_EVENT_UP;
+        }
+        else if (encostar && mexeu) {
+            tipo = MoonBridge.LI_TOUCH_EVENT_MOVE;
+        }
+        else if (encostar && botoes != canetaBotoes) {
+            tipo = MoonBridge.LI_TOUCH_EVENT_BUTTON_ONLY;
+        }
+        else if (!encostar && mexeu) {
+            tipo = MoonBridge.LI_TOUCH_EVENT_HOVER;
+        }
+        else {
+            tipo = -1;
+        }
+
+        // A roda continua sendo roda: nao ha equivalente em caneta.
+        if (event.getActionMasked() == MotionEvent.ACTION_SCROLL) {
+            conn.sendMouseHighResScroll((short)(event.getAxisValue(MotionEvent.AXIS_VSCROLL) * 120));
+            conn.sendMouseHighResHScroll((short)(event.getAxisValue(MotionEvent.AXIS_HSCROLL) * 120));
+        }
+
+        if (tipo >= 0) {
+            int resultado = conn.sendPenEvent(tipo, MoonBridge.LI_TOOL_TYPE_PEN, botoes,
+                    canetaX / largura, canetaY / altura,
+                    encostar ? 0.5f : 0f, 0, 0,
+                    MoonBridge.LI_ROT_UNKNOWN, MoonBridge.LI_TILT_UNKNOWN);
+            if (resultado == MoonBridge.LI_ERR_UNSUPPORTED) {
+                canetaAceitaPeloPc = false;
+                LimeLog.warning("Mugen: o PC nao aceita caneta, o mouse volta ao normal");
+                return false;
+            }
+        }
+        canetaEncostada = encostar;
+        canetaBotoes = botoes;
+        return true;
+    }
+
     private boolean sendPenEventForPointer(View view, MotionEvent event, byte eventType, byte toolType, int pointerIndex) {
         byte penButtons = 0;
         if ((event.getButtonState() & MotionEvent.BUTTON_STYLUS_PRIMARY) != 0) {
@@ -1831,6 +1939,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 if (!inputCaptureProvider.isCapturingActive()) {
                     // We return true here because otherwise the events may end up causing
                     // Android to synthesize d-pad events.
+                    return true;
+                }
+
+                // MUGEN: com a compatibilidade de mouse pro LoL ligada, o mouse
+                // vira caneta e nada do caminho de mouse abaixo roda.
+                if (prefConfig.mugenMouseComoCaneta && canetaAceitaPeloPc
+                        && mouseComoCaneta(view, event, buttonState)) {
+                    lastButtonState = buttonState;
                     return true;
                 }
 
