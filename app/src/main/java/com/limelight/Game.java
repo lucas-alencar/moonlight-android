@@ -2707,6 +2707,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 iniciarVigiaDaConexao();
                 updatePipAutoEnter();
 
+                // O controle na tela se apresenta ao PC agora, com a conexao de
+                // pe, pra o pad virtual do Xbox ja existir quando o jogo abrir.
+                // Sem isto ele so nasceria no primeiro toque, tarde demais pro
+                // Genshin, que decide teclado-ou-controle na abertura.
+                controllerHandler.sendOscControllerArrival();
+
                 // Hide the mouse cursor now after a short delay.
                 // Doing it before dismissing the spinner seems to be undone
                 // when the spinner gets displayed. On Android Q, even now

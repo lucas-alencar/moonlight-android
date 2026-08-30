@@ -2786,6 +2786,56 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return true;
     }
 
+    /*
+     * Apresenta o controle na tela ao PC como um Xbox emulado ASSIM QUE a
+     * conexao sobe, em vez de esperar o primeiro toque.
+     *
+     * POR QUE. O Sunshine so cria o controle virtual (pelo ViGEmBus) quando
+     * chega o primeiro pacote de controle. Sem este anuncio, o pad nasce no
+     * PRIMEIRO toque de um botao da tela, e um jogo aberto DEPOIS de ligar o
+     * streaming (o caso do Genshin) decide o modo de entrada na hora em que
+     * abre, quando ainda nao ha controle nenhum, e fica no teclado pra sempre.
+     * Medido em 30/08: conexao as 00:50:00, pad so nasceu as 00:51:02, no
+     * toque. Anunciando aqui, o pad existe antes de o jogo abrir, igual a um
+     * controle de verdade que ja estava plugado.
+     *
+     * Emular XBOX de proposito: e o pad que o Windows entende sem driver extra
+     * e o que o Genshin trata como controle de primeira classe. O anuncio vale
+     * so pro controle 0 (o da tela); controle fisico se anuncia sozinho quando
+     * o Android o enxerga.
+     */
+    public void sendOscControllerArrival() {
+        if (!prefConfig.onscreenController) {
+            return;
+        }
+
+        // Os botoes que um Xbox padrao entrega. A tela desenha um subconjunto,
+        // mas anunciar o conjunto cheio evita que o host trate o pad como
+        // incompleto e alinha com o que o pad virtual do Sunshine expoe.
+        int supportedButtonFlags =
+                ControllerPacket.A_FLAG | ControllerPacket.B_FLAG |
+                ControllerPacket.X_FLAG | ControllerPacket.Y_FLAG |
+                ControllerPacket.UP_FLAG | ControllerPacket.DOWN_FLAG |
+                ControllerPacket.LEFT_FLAG | ControllerPacket.RIGHT_FLAG |
+                ControllerPacket.LB_FLAG | ControllerPacket.RB_FLAG |
+                ControllerPacket.PLAY_FLAG | ControllerPacket.BACK_FLAG |
+                ControllerPacket.LS_CLK_FLAG | ControllerPacket.RS_CLK_FLAG;
+
+        conn.sendControllerArrivalEvent((byte) 0, getActiveControllerMask(),
+                MoonBridge.LI_CTYPE_XBOX, supportedButtonFlags,
+                MoonBridge.LI_CCAP_ANALOG_TRIGGERS);
+
+        // O anuncio sozinho NAO faz o Sunshine criar o pad virtual: medido em
+        // 30/08, a conexao subiu, o arrival foi, e nenhum controle nasceu. Quem
+        // cria o pad no ViGEmBus e o primeiro PACOTE DE ESTADO (a alocacao la
+        // olha o bit do controle na mascara, nao se o estado e diferente de
+        // zero). Entao mandamos um estado neutro uma vez, que e exatamente o
+        // que um controle de verdade faz ao ser plugado: aparece parado. A
+        // partir daqui o pad existe, e o jogo aberto depois ja o enxerga.
+        reportOscState(0, (short) 0, (short) 0, (short) 0, (short) 0,
+                (byte) 0, (byte) 0);
+    }
+
     public void reportOscState(int buttonFlags,
                                short leftStickX, short leftStickY,
                                short rightStickX, short rightStickY,
